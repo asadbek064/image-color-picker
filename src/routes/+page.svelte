@@ -1,9 +1,17 @@
 <script>
+// @ts-nocheck
+
 	import { onMount } from 'svelte';
+	import { isEyeDropperSupported, pickColorWithEyeDropper } from '$lib/utils/eyeDropperUtils';
+	import { hexToRgb, rgbToHex, rgbToHsl } from '$lib/utils/colorUtils';
+	import { extractColors } from '$lib/utils/colorExtraction';
 
 	// State
 	let paletteCount = 5;
 	let selectedColor = '#FF6B6B';
+	/**
+	 * @type {string | ArrayBuffer | null}
+	 */
 	let uploadedImageSrc = null;
 	let isDragging = false;
 
@@ -19,30 +27,57 @@
 	let isPickerActive = false;
 	let pickerX = 0;
 	let pickerY = 0;
+	/**
+	 * @type {string | null}
+	 */
 	let hoveredPixelColor = null;
 
+	// EyeDropper support
+	let eyeDropperSupported = false;
+
 	// Elements
+	/**
+	 * @type {HTMLInputElement}
+	 */
 	let fileInput;
+	/**
+	 * @type {HTMLCanvasElement}
+	 */
 	let canvas;
+	/**
+	 * @type {CanvasRenderingContext2D | null}
+	 */
 	let ctx;
+	/**
+	 * @type {HTMLImageElement}
+	 */
 	let imagePreview;
+	/**
+	 * @type {HTMLCanvasElement}
+	 */
 	let zoomCanvas;
+	/**
+	 * @type {CanvasRenderingContext2D | null}
+	 */
 	let zoomCtx;
 
 	onMount(() => {
 		if (canvas) {
 			ctx = canvas.getContext('2d');
 		}
-		if (zoomCanvas) {
-			zoomCtx = zoomCanvas.getContext('2d');
-		}
+		eyeDropperSupported = isEyeDropperSupported();
 	});
+
+	// Reactive statement to initialize zoom canvas context when it becomes available
+	$: if (zoomCanvas && !zoomCtx) {
+		zoomCtx = zoomCanvas.getContext('2d');
+	}
 
 	function decreasePalette() {
 		if (paletteCount > 3) {
 			paletteCount--;
 			if (uploadedImageSrc && imagePreview) {
-				extractColors(imagePreview, paletteCount);
+				handleExtractColors(imagePreview, paletteCount);
 			}
 		}
 	}
@@ -51,7 +86,7 @@
 		if (paletteCount < 10) {
 			paletteCount++;
 			if (uploadedImageSrc && imagePreview) {
-				extractColors(imagePreview, paletteCount);
+				handleExtractColors(imagePreview, paletteCount);
 			}
 		}
 	}
@@ -74,11 +109,25 @@
 		fileInput?.click();
 	}
 
-	function pickFromScreen() {
-		console.log('Pick from screen');
+	async function pickFromScreen() {
+		const color = await pickColorWithEyeDropper();
+		if (color) {
+			// Clear the uploaded image
+			uploadedImageSrc = null;
+
+			// Set palette to only show the picked color
+			paletteColors = [color];
+			paletteCount = 1;
+
+			// Select the picked color
+			selectColor(color);
+		}
 	}
 
 	// File handling
+	/**
+	 * @param {{ target: { files: any[]; }; }} event
+	 */
 	function handleFileSelect(event) {
 		const file = event.target.files?.[0];
 		if (file && file.type.startsWith('image/')) {
@@ -86,16 +135,25 @@
 		}
 	}
 
+	/**
+	 * @param {{ preventDefault: () => void; }} event
+	 */
 	function handleDragOver(event) {
 		event.preventDefault();
 		isDragging = true;
 	}
 
+	/**
+	 * @param {{ preventDefault: () => void; }} event
+	 */
 	function handleDragLeave(event) {
 		event.preventDefault();
 		isDragging = false;
 	}
 
+	/**
+	 * @param {{ preventDefault: () => void; dataTransfer: { files: any[]; }; }} event
+	 */
 	function handleDrop(event) {
 		event.preventDefault();
 		isDragging = false;
@@ -114,136 +172,24 @@
 			// Wait for image to load in the DOM
 			setTimeout(() => {
 				if (imagePreview) {
-					extractColors(imagePreview, paletteCount);
+					handleExtractColors(imagePreview, paletteCount);
 				}
 			}, 100);
 		};
 		reader.readAsDataURL(file);
 	}
 
-	// Color extraction
-	function extractColors(img, numColors) {
+	// Color extraction wrapper
+	function handleExtractColors(img, numColors) {
 		if (!canvas || !ctx) return;
 
-		canvas.width = img.naturalWidth;
-		canvas.height = img.naturalHeight;
-		ctx.drawImage(img, 0, 0);
-
-		const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-		const pixels = [];
-
-		// Sample pixels (every 5th pixel for performance)
-		for (let i = 0; i < imageData.data.length; i += 20) {
-			pixels.push([
-				imageData.data[i],
-				imageData.data[i + 1],
-				imageData.data[i + 2]
-			]);
-		}
-
-		const dominantColors = kMeans(pixels, numColors);
-		paletteColors = dominantColors.map(color => rgbToHex(color[0], color[1], color[2]));
+		paletteColors = extractColors(img, numColors, canvas, ctx);
 
 		// Update selected color to the most dominant
 		if (paletteColors.length > 0) {
 			selectedColor = paletteColors[0];
 			updateSelectedColorVariants(selectedColor);
 		}
-	}
-
-	function kMeans(pixels, k, maxIterations = 10) {
-		// Initialize centroids randomly
-		let centroids = [];
-		const used = new Set();
-
-		while (centroids.length < k) {
-			const idx = Math.floor(Math.random() * pixels.length);
-			const key = pixels[idx].join(',');
-			if (!used.has(key)) {
-				centroids.push([...pixels[idx]]);
-				used.add(key);
-			}
-		}
-
-		for (let iter = 0; iter < maxIterations; iter++) {
-			const clusters = Array(k).fill(null).map(() => []);
-
-			// Assign pixels to nearest centroid
-			for (const pixel of pixels) {
-				let minDist = Infinity;
-				let closestIdx = 0;
-
-				for (let i = 0; i < k; i++) {
-					const dist = colorDistance(pixel, centroids[i]);
-					if (dist < minDist) {
-						minDist = dist;
-						closestIdx = i;
-					}
-				}
-
-				clusters[closestIdx].push(pixel);
-			}
-
-			// Update centroids
-			const newCentroids = clusters.map(cluster => {
-				if (cluster.length === 0) return centroids[0];
-
-				const sum = cluster.reduce((acc, pixel) => {
-					return [acc[0] + pixel[0], acc[1] + pixel[1], acc[2] + pixel[2]];
-				}, [0, 0, 0]);
-
-				return [
-					Math.round(sum[0] / cluster.length),
-					Math.round(sum[1] / cluster.length),
-					Math.round(sum[2] / cluster.length)
-				];
-			});
-
-			centroids = newCentroids;
-		}
-
-		// Sort by cluster size
-		const clusterSizes = Array(k).fill(0);
-		for (const pixel of pixels) {
-			let minDist = Infinity;
-			let closestIdx = 0;
-			for (let i = 0; i < k; i++) {
-				const dist = colorDistance(pixel, centroids[i]);
-				if (dist < minDist) {
-					minDist = dist;
-					closestIdx = i;
-				}
-			}
-			clusterSizes[closestIdx]++;
-		}
-
-		return centroids
-			.map((color, idx) => ({ color, size: clusterSizes[idx] }))
-			.sort((a, b) => b.size - a.size)
-			.map(item => item.color);
-	}
-
-	function colorDistance(c1, c2) {
-		return Math.sqrt(
-			Math.pow(c1[0] - c2[0], 2) +
-			Math.pow(c1[1] - c2[1], 2) +
-			Math.pow(c1[2] - c2[2], 2)
-		);
-	}
-
-	function rgbToHex(r, g, b) {
-		return '#' + [r, g, b]
-			.map(x => x.toString(16).padStart(2, '0'))
-			.join('');
-	}
-
-	function hexToRgb(hex) {
-		const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-		return result ? {
-			r: parseInt(result[1], 16),
-			g: parseInt(result[2], 16),
-			b: parseInt(result[3], 16)
-		} : null;
 	}
 
 	function updateSelectedColorVariants(hex) {
@@ -253,28 +199,7 @@
 		// Update color values
 		colorValues.hex = hex;
 		colorValues.rgb = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
-
-		// Calculate HSL
-		const r = rgb.r / 255;
-		const g = rgb.g / 255;
-		const b = rgb.b / 255;
-		const max = Math.max(r, g, b);
-		const min = Math.min(r, g, b);
-		let h, s, l = (max + min) / 2;
-
-		if (max === min) {
-			h = s = 0;
-		} else {
-			const d = max - min;
-			s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-			switch (max) {
-				case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-				case g: h = ((b - r) / d + 2) / 6; break;
-				case b: h = ((r - g) / d + 4) / 6; break;
-			}
-		}
-
-		colorValues.hsl = `hsl(${Math.round(h * 360)}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
+		colorValues.hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
 	}
 
 	function selectColor(color) {
@@ -290,11 +215,39 @@
 		const x = event.clientX - rect.left;
 		const y = event.clientY - rect.top;
 
-		// Convert display coordinates to image coordinates
-		const scaleX = imagePreview.naturalWidth / rect.width;
-		const scaleY = imagePreview.naturalHeight / rect.height;
-		const imageX = Math.floor(x * scaleX);
-		const imageY = Math.floor(y * scaleY);
+		// Convert display coordinates to image coordinates, accounting for object-fit: contain
+		const imgWidth = imagePreview.naturalWidth;
+		const imgHeight = imagePreview.naturalHeight;
+		const imgAspect = imgWidth / imgHeight;
+		const containerAspect = rect.width / rect.height;
+
+		let renderWidth, renderHeight, offsetX, offsetY;
+
+		if (imgAspect > containerAspect) {
+			// Image is wider - width fills container, height has letterboxing
+			renderWidth = rect.width;
+			renderHeight = renderWidth / imgAspect;
+			offsetX = 0;
+			offsetY = (rect.height - renderHeight) / 2;
+		} else {
+			// Image is taller - height fills container, width has letterboxing
+			renderHeight = rect.height;
+			renderWidth = imgAspect * renderHeight;
+			offsetX = (rect.width - renderWidth) / 2;
+			offsetY = 0;
+		}
+
+		const scaleX = imgWidth / renderWidth;
+		const scaleY = imgHeight / renderHeight;
+		const imageX = Math.floor((x - offsetX) * scaleX);
+		const imageY = Math.floor((y - offsetY) * scaleY);
+
+		// Check if coordinates are within image bounds
+		if (imageX < 0 || imageX >= canvas.width || imageY < 0 || imageY >= canvas.height) {
+			isPickerActive = false;
+			hoveredPixelColor = null;
+			return;
+		}
 
 		// Get pixel color at cursor position
 		const pixelData = ctx.getImageData(imageX, imageY, 1, 1).data;
@@ -311,6 +264,7 @@
 
 	function handleImageMouseLeave() {
 		isPickerActive = false;
+		hoveredPixelColor = null;
 	}
 
 	function handleImageClick(event) {
@@ -318,16 +272,31 @@
 		selectColor(hoveredPixelColor);
 	}
 
+	/**
+	 * @param {number} centerX
+	 * @param {number} centerY
+	 */
 	function drawZoomView(centerX, centerY) {
-		if (!zoomCanvas || !zoomCtx || !canvas || !ctx) return;
+		if (!zoomCanvas || !canvas || !ctx) {
+			return;
+		}
 
-		const zoomSize = 150; // Size of zoom canvas
-		const pixelSize = 10; // Size of each pixel in the zoom view
+		// Ensure context is initialized
+		if (!zoomCtx) {
+			zoomCtx = zoomCanvas.getContext('2d', { imageSmoothingEnabled: false });
+			if (!zoomCtx) return;
+		}
+
+		const zoomSize = 150; // Size of zoom canvas (matches CSS size to prevent blur)
 		const gridSize = 15; // Number of pixels to show (15x15 grid)
+		const pixelSize = zoomSize / gridSize; // Size of each pixel in the zoom view (10px)
 		const halfGrid = Math.floor(gridSize / 2);
 
 		zoomCanvas.width = zoomSize;
 		zoomCanvas.height = zoomSize;
+
+		// Disable image smoothing for crisp pixels
+		zoomCtx.imageSmoothingEnabled = false;
 
 		// Clear zoom canvas
 		zoomCtx.clearRect(0, 0, zoomSize, zoomSize);
@@ -375,7 +344,7 @@
 		const centerPixelY = halfGrid * pixelSize;
 
 		zoomCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-		zoomCtx.lineWidth = 2;
+		zoomCtx.lineWidth = 1;
 
 		// Vertical crosshair
 		zoomCtx.beginPath();
@@ -416,7 +385,9 @@
 				<div class="left-column">
 					<!-- Image Preview Panel -->
 					<div class="image-section">
+						<!-- svelte-ignore a11y_label_has_associated_control -->
 						<label class="section-label">Image</label>
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
 							class="image-preview"
 							class:dragging={isDragging}
@@ -425,7 +396,9 @@
 							on:drop={handleDrop}
 						>
 							{#if uploadedImageSrc}
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
 								<div class="image-container">
+									<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 									<img
 										bind:this={imagePreview}
 										src={uploadedImageSrc}
@@ -435,19 +408,19 @@
 										on:mouseleave={handleImageMouseLeave}
 										on:click={handleImageClick}
 									/>
-
-									{#if isPickerActive}
-										<div class="zoom-loupe" style="left: {pickerX}px; top: {pickerY}px;">
-											<canvas bind:this={zoomCanvas} class="zoom-canvas"></canvas>
-											{#if hoveredPixelColor}
-												<div class="pixel-color-display">
-													<div class="pixel-color-swatch" style="background-color: {hoveredPixelColor}"></div>
-													<span class="pixel-color-text">{hoveredPixelColor}</span>
-												</div>
-											{/if}
-										</div>
-									{/if}
 								</div>
+
+								{#if isPickerActive}
+									<div class="zoom-loupe" style="left: {pickerX}px; top: {pickerY}px;">
+										<canvas bind:this={zoomCanvas} class="zoom-canvas"></canvas>
+										{#if hoveredPixelColor}
+											<div class="pixel-color-display">
+												<div class="pixel-color-swatch" style="background-color: {hoveredPixelColor}"></div>
+												<span class="pixel-color-text">{hoveredPixelColor}</span>
+											</div>
+										{/if}
+									</div>
+								{/if}
 							{:else}
 								<div class="placeholder-image">
 									<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -465,11 +438,13 @@
 					<div class="palette-section">
 						<div class="palette-controls-top">
 							<div class="palette-count-controls">
+								<!-- svelte-ignore a11y_consider_explicit_label -->
 								<button class="icon-btn" on:click={decreasePalette}>
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<line x1="5" y1="12" x2="19" y2="12"/>
 									</svg>
 								</button>
+								<!-- svelte-ignore a11y_consider_explicit_label -->
 								<button class="icon-btn" on:click={increasePalette}>
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<line x1="12" y1="5" x2="12" y2="19"/>
@@ -478,7 +453,9 @@
 								</button>
 							</div>
 
+							<!-- svelte-ignore a11y_consider_explicit_label -->
 							<div class="palette-actions">
+								<!-- svelte-ignore a11y_consider_explicit_label -->
 								<button class="icon-btn" on:click={downloadPalette}>
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -498,6 +475,7 @@
 
 						<div class="palette-strip">
 							{#each paletteColors.slice(0, paletteCount) as color}
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
 								<div
 									class="color-swatch"
 									class:selected={color === selectedColor}
@@ -513,6 +491,7 @@
 				<div class="right-column">
 					<!-- Selected Color Display -->
 					<div class="color-display-section">
+						<!-- svelte-ignore a11y_label_has_associated_control -->
 						<label class="section-label">Selected Colors</label>
 						<div class="color-preview-pair">
 							<div class="color-preview-box-wrapper">
@@ -549,6 +528,7 @@
 							<span class="value-label">RGB</span>
 							<div class="value-container">
 								<span class="value-text">{colorValues.rgb}</span>
+								<!-- svelte-ignore a11y_consider_explicit_label -->
 								<button class="copy-btn" on:click={() => copyToClipboard(colorValues.rgb)}>
 									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -562,6 +542,7 @@
 							<span class="value-label">HSL</span>
 							<div class="value-container">
 								<span class="value-text">{colorValues.hsl}</span>
+								<!-- svelte-ignore a11y_consider_explicit_label -->
 								<button class="copy-btn" on:click={() => copyToClipboard(colorValues.hsl)}>
 									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -587,7 +568,8 @@
 							Use your image
 						</button>
 
-						<button class="btn-secondary" on:click={pickFromScreen}>
+						{#if eyeDropperSupported}
+					<button class="btn-secondary" on:click={pickFromScreen}>
 							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/>
 								<line x1="16" y1="8" x2="2" y2="22"/>
@@ -595,6 +577,7 @@
 							</svg>
 							Pick from Screen
 						</button>
+					{/if}
 
 						<div class="privacy-note">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -663,11 +646,11 @@
 	.image-preview {
 		background: #f9fafb;
 		border-radius: 12px;
-		aspect-ratio: 16 / 9;
+		min-height: 300px;
+		max-height: 600px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		overflow: hidden;
 		position: relative;
 		border: 2px dashed transparent;
 		transition: all 0.2s;
@@ -696,14 +679,16 @@
 		width: 100%;
 		height: 100%;
 		position: relative;
+		border-radius: 12px;
+		overflow: hidden;
 	}
 
 	.uploaded-image {
 		width: 100%;
 		height: 100%;
-		object-fit: cover;
-		border-radius: 10px;
+		object-fit: contain;
 		cursor: crosshair;
+		display: block;
 	}
 
 	.zoom-loupe {
@@ -711,14 +696,20 @@
 		pointer-events: none;
 		z-index: 1000;
 		transform: translate(20px, -180px);
+		will-change: transform;
 	}
 
 	.zoom-canvas {
 		display: block;
+		width: 150px;
+		height: 150px;
 		border: 3px solid #111827;
 		border-radius: 12px;
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 		background: white;
+		image-rendering: pixelated;
+		image-rendering: -moz-crisp-edges;
+		image-rendering: crisp-edges;
 	}
 
 	.pixel-color-display {
