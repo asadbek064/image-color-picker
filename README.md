@@ -1,58 +1,73 @@
-# Svelte library
+# Image Color Picker
 
-Everything you need to build a Svelte library, powered by [`sv`](https://npmjs.com/package/sv).
+A web application for extracting and analyzing colors from images.
 
-Read more about creating a library [in the docs](https://svelte.dev/docs/kit/packaging).
+> **Note:** This was a toy project to learn more about SvelteKit and the Svelte framework itself.
 
-## Creating a project
+## Features
 
-If you're seeing this, you've probably already done this step. Congrats!
+### Color Extraction
+- **K-means Clustering**: Automatically extracts 3-10 dominant colors from any image
+- **Pixel-Perfect Picking**: Hover over any pixel with a magnified 15×15 grid view for precise color selection
+- **Screen Color Picker**: Pick colors from anywhere on your screen using the EyeDropper API (Chrome/Edge)
 
-```sh
-# create a new project in the current directory
-npx sv create
+### Image Input
+- **Drag & Drop**: Drop images directly onto the preview area
+- **File Upload**: Click to browse and select images from your device
+- **Keyboard Paste**: Press Ctrl/Cmd+V to paste images from clipboard
+- **Default Image**: Loads with a test image for immediate exploration
 
-# create a new project in my-app
-npx sv create my-app
+## Getting Started
+
+### Installation
+
+```bash
+git clone <repository-url>
+cd image-color-picker
+pnpm install
+pnpm run dev
+
+# Open in browser
+# Navigate to http://localhost:5173
 ```
 
-## Developing
+## Usage
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+1. **Load an Image**
+   - Drag and drop an image onto the preview area
+   - Click "Use your image" to select a file
+   - Paste an image with Ctrl/Cmd+V
+   - Use the default test image on page load
 
-```sh
-npm run dev
+2. **Extract Dominant Colors**
+   - Adjust palette size using +/- buttons
+   - View extracted colors in the palette strip
+   - Click any color to select it
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
+3. **Pick Specific Pixels**
+   - Hover over the image to see a magnified pixel grid
+   - Move cursor to target specific pixels
+   - Click to select that exact pixel's color
 
-Everything inside `src/lib` is part of your library, everything inside `src/routes` can be used as a showcase or preview app.
+4. **Pick from Screen** (Chrome/Edge only)
+   - Click "Pick from Screen"
+   - Use the system color picker to select any color on your screen
+   - Selected color replaces the image and shows in the palette
 
-## Building
+5. **Copy Color Values**
+   - View color in HEX, RGB, and HSL formats
+   - Click copy icon next to any value to copy to clipboard
 
-To build your library:
 
-```sh
-npm pack
-```
+## Color Extraction Algorithm
 
-To create a production version of your showcase app:
+The app uses k-means clustering to extract dominant colors:
 
-```sh
-npm run build
-```
+1. **Sampling**: Samples every 5th pixel for performance
+2. **Clustering**: Groups similar colors using Euclidean distance
+3. **Iteration**: Refines centroids over 10 iterations
+4. **Sorting**: Orders colors by cluster size (most dominant first)
 
-You can preview the production build with `npm run preview`.
+## License
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
-
-## Publishing
-
-Go into the `package.json` and give your package the desired name through the `"name"` option. Also consider adding a `"license"` field and point it to a `LICENSE` file which you can create from a template (one popular option is the [MIT license](https://opensource.org/license/mit/)).
-
-To publish your library to [npm](https://www.npmjs.com):
-
-```sh
-npm publish
-```
+MIT

@@ -1,6 +1,7 @@
 test-results
 node_modules
 
+CLAUDE.md
 # Output
 .output
 .vercel
