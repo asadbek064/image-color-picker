@@ -61,11 +61,44 @@
 	 */
 	let zoomCtx;
 
-	onMount(() => {
+	onMount(async () => {
 		if (canvas) {
 			ctx = canvas.getContext('2d');
 		}
 		eyeDropperSupported = isEyeDropperSupported();
+
+		// Load default test image
+		try {
+			const response = await fetch('/test.jpeg');
+			const blob = await response.blob();
+			processImage(blob);
+		} catch (error) {
+			console.log('No default test image available');
+		}
+
+		// Add paste event listener
+		const handlePaste = (e) => {
+			const items = e.clipboardData?.items;
+			if (!items) return;
+
+			for (let i = 0; i < items.length; i++) {
+				const item = items[i];
+				if (item.type.startsWith('image/')) {
+					e.preventDefault();
+					const blob = item.getAsFile();
+					if (blob) {
+						processImage(blob);
+					}
+					break;
+				}
+			}
+		};
+
+		window.addEventListener('paste', handlePaste);
+
+		return () => {
+			window.removeEventListener('paste', handlePaste);
+		};
 	});
 
 	// Reactive statement to initialize zoom canvas context when it becomes available
@@ -428,7 +461,7 @@
 										<circle cx="8.5" cy="8.5" r="1.5"/>
 										<polyline points="21 15 16 10 5 21"/>
 									</svg>
-									<p class="drop-text">Drop image or use button below</p>
+									<p class="drop-text">Drop, paste, or use button below</p>
 								</div>
 							{/if}
 						</div>
@@ -456,7 +489,7 @@
 							<!-- svelte-ignore a11y_consider_explicit_label -->
 							<div class="palette-actions">
 								<!-- svelte-ignore a11y_consider_explicit_label -->
-								<button class="icon-btn" on:click={downloadPalette}>
+								<!-- <button class="icon-btn" on:click={downloadPalette}>
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
 										<polyline points="7 10 12 15 17 10"/>
@@ -469,13 +502,14 @@
 										<polyline points="17 21 17 13 7 13 7 21"/>
 										<polyline points="7 3 7 8 15 8"/>
 									</svg>
-								</button>
+								</button> -->
 							</div>
 						</div>
 
 						<div class="palette-strip">
 							{#each paletteColors.slice(0, paletteCount) as color}
 								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
 								<div
 									class="color-swatch"
 									class:selected={color === selectedColor}
@@ -515,6 +549,7 @@
 							<span class="value-label">HEX</span>
 							<div class="value-container">
 								<span class="value-text">{colorValues.hex}</span>
+								<!-- svelte-ignore a11y_consider_explicit_label -->
 								<button class="copy-btn" on:click={() => copyToClipboard(colorValues.hex)}>
 									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -552,7 +587,7 @@
 							</div>
 						</div>
 
-						<a href="#details" class="details-link">View color details →</a>
+						<!-- <a href="#details" class="details-link">View color details →</a> -->
 					</div>
 
 					<!-- Utility Panel -->
@@ -647,7 +682,7 @@
 		background: #f9fafb;
 		border-radius: 12px;
 		min-height: 300px;
-		max-height: 600px;
+		max-height: 70vh;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -685,7 +720,7 @@
 
 	.uploaded-image {
 		width: 100%;
-		height: 100%;
+		max-height: 70vh;
 		object-fit: contain;
 		cursor: crosshair;
 		display: block;
@@ -1018,6 +1053,15 @@
 
 		.card {
 			padding: 1.5rem;
+		}
+
+		.image-preview {
+			max-height: 50vh;
+			min-height: 200px;
+		}
+
+		.uploaded-image {
+			max-height: 50vh;
 		}
 
 		.palette-strip {
